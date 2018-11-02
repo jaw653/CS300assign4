@@ -109,14 +109,15 @@ testing purposes only
 
 	execvp("./process", args);
 */
+/*
 	char *args[3];
 	args[0] = "./process";
 	args[1] = "1";
 	args[2] = NULL;
-
+*/
 	dispatcher(numJobs, sysQueue, p1q, p2q, p3q);
 
-//	execvp("./process", args);
+	//execvp("./process", args);
 
 /*
 	JOB *j;
@@ -172,7 +173,11 @@ static void startProcess(JOB *j, char **args)
 		case 0:
 			printf("exec\n");
 			printf("EXECVP(./process, %s,%s,%s)\n", args[0], args[1], args[2]);
-			execvp("./process", args);
+			char **argv = malloc(sizeof(char *) * 3);
+			strcpy(argv[0], "./process");
+			strcpy(argv[1], "1");
+			argv[2] = NULL;
+			execvp("./process", argv);
 			//execvp("./process", NULL);
 			return;
 		default:
@@ -326,7 +331,7 @@ static void dispatchJobs(QUEUE *jobList, QUEUE *sysQueue, QUEUE *p1q, QUEUE *p2q
 	}
 }
 
-static void dispatcher(int size, QUEUE *sys, QUEUE *p1, QUEUE *p2, QUEUE *p3)
+static void dispatcher(int size, QUEUE *sysQueue, QUEUE *p1, QUEUE *p2, QUEUE *p3)
 {
 	// while (still things in any queues)
 	//		1. enqueue to appropriate queues
@@ -348,6 +353,76 @@ static void dispatcher(int size, QUEUE *sys, QUEUE *p1, QUEUE *p2, QUEUE *p3)
 	//				print status of process
 	//		4. sleep, increment timer
 
+	if (running)
+	{
+		if (--running->remainingProcessorTime == 0)
+		{
+			terminateProcess(running);
+			running = NULL;
+		}
+		else if (sizeQUEUE(sysQueue) > 0 || !priorityQueuesEmpty(p1, p2, p3))
+		{
+			if (running->priority != 0)
+			{
+				JOB *ptr = suspendProcess(running);
+				incrementPriority(ptr);
+				// enqueue ptr to the proper priority queue
+				switch (ptr->priority)
+				{
+					case 0:
+						enqueue(sysQueue, ptr);
+						break;
+					case 1:
+						enqueue(p1, ptr);
+						break;
+					case 2:
+						enqueue(p2, ptr);
+						break;
+					case 3:
+						enqueue(p3, ptr);
+						break;
+					default:
+						break;
+				}
+				running = NULL;
+			}
+		}
+
+		if (!running && (!priorityQueuesEmpty(p1, p2, p3 || sizeQUEUE(sysQueue) > 0)))
+		{
+			if (sizeQUEUE(sysQueue) > 0)
+			{
+				running = dequeue(sysQueue);
+			}
+			else if (sizeQUEUE(p1) > 0)
+			{
+				running = dequeue(p1);
+			}
+			else if (sizeQUEUE(p2) > 0)
+			{
+				running = dequeue(p2);
+			}
+			else if (sizeQUEUE(p3) > 0)
+			{
+				running = dequeue(p3);
+			}
+
+			if (running->pid != 0)
+			{
+				restartProcess(running);
+			}
+			else
+			{
+				// init args here
+				startProcess(running, args);
+			}
+
+			sleep(1);
+			++timer;
+		}
+	}
+
+/*
 	char *args[3];
 	args[0] = "./process";
 	args[2] = NULL;
@@ -414,4 +489,5 @@ static void dispatcher(int size, QUEUE *sys, QUEUE *p1, QUEUE *p2, QUEUE *p3)
 		// sleep(1);
 		// ++timer;		//FIXME: is this needed?
 	}
+*/
 }
