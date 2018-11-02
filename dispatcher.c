@@ -34,28 +34,40 @@ typedef struct JOB JOB;
 struct JOB
 {
 	pid_t pid;
+	char *args[3];
 	int arrivalTime;
+	int remainingProcessorTime;
 	int priority;
 	char *processorTime;
-	int remainingProcessorTime;
-	char **args;
 };
 
+/* Global Variables */
 JOB *running;
+QUEUE *sysQueue;
+QUEUE *p1q;
+QUEUE *p2q;
+QUEUE *p3q;
+QUEUE *jobList;
+int timer;
 
-static void displayJOB(FILE *, void *);
 
-static void startProcess(JOB *, char **);
-static JOB *restartProcess(JOB *);		// Required functions^
+/* Required functions */
+static JOB *startProcess(JOB *);
+static JOB *restartProcess(JOB *);
 static JOB *terminateProcess(JOB *);
 static JOB *suspendProcess(JOB *);
 
-static int priorityQueuesEmpty(QUEUE *, QUEUE *, QUEUE *);
-static void incrementPriority(JOB *);
+/* Utility functions */
+static void displayJOB(FILE *, void *);
+static void initialize(void);
+static int complete(void);
+static int priorityQueuesEmpty(void);
+static void incrementPriority(JOB *);									// Safe method for incrementing process priority
 static void readInFile(FILE *, QUEUE *);
-static void dispatchJobs(QUEUE *, QUEUE *, QUEUE *, QUEUE *, QUEUE *);
-
-static void dispatcher(int, QUEUE *, QUEUE *, QUEUE *, QUEUE *);
+static void dispatchJobs(void);
+static void enqToPriority(JOB *);
+static QUEUE *getHighestPriorityQ(void);
+static void dispatcher(void);
 
 int main(int argc, char *argv[])
 {
@@ -69,120 +81,43 @@ int main(int argc, char *argv[])
 	/* Open input file for reading */
 	FILE *inputFile = fopen(argv[1], "r");
 
-	/* Create all priority queues */
-	QUEUE *jobList = newQUEUE(displayJOB);
-	QUEUE *sysQueue = newQUEUE(displayJOB);
-	QUEUE *p1q = newQUEUE(displayJOB);
-	QUEUE *p2q = newQUEUE(displayJOB);
-	QUEUE *p3q = newQUEUE(displayJOB);
-
+	/* Set all vars to base values, initialize all queue data structs */
+	initialize();
+printf("initialized\n");
 	/* Read input file into job dispatch list */
 	readInFile(inputFile, jobList);
-/*
-testing purposes only
-	printf("jobslist: \n");
-	displayQUEUE(stdout, jobList);
-*/
-	int numJobs = sizeQUEUE(jobList);
-	printf("numjobs is: %d\n", numJobs); 
+	fclose(inputFile);
 
 	/* Send each job in job dispatch list to its proper priority queue */
-	dispatchJobs(jobList, sysQueue, p1q, p2q, p3q);
+	dispatchJobs();
 
-	printf("joblist:");
-	displayQUEUE(stdout, jobList);
-	printf("\n");
-	printf("sysqueue:");
-	displayQUEUE(stdout, sysQueue);
-	printf("\n");
-	printf("p1:");
-	displayQUEUE(stdout, p1q);
-	printf("\np2:");
-	displayQUEUE(stdout, p2q);
-	printf("\np3:");
-	displayQUEUE(stdout, p3q);
-	printf("\n");
-
-//	pid_t pid;
-/*
-	char *args[3] = {"./process", "5", NULL};
-
-	execvp("./process", args);
-*/
-/*
-	char *args[3];
-	args[0] = "./process";
-	args[1] = "1";
-	args[2] = NULL;
-*/
-	dispatcher(numJobs, sysQueue, p1q, p2q, p3q);
+	dispatcher();
 
 	//execvp("./process", args);
-
-/*
-	JOB *j;
-
-	int i;
-	for (i = 0; i < numJobs; i++)
-	{
-		if (sizeQUEUE(sysQueue) > 0)
-		{
-			j = dequeue(sysQueue);
-			startProcess(j, args);
-		}
-		else if (sizeQUEUE(p1q) > 0)
-		{
-			j = dequeue(p1q);
-			startProcess(j, args);
-		}
-		else if (sizeQUEUE(p2q) > 0)
-		{
-			j = dequeue(p2q);
-			startProcess(j, args);
-		}
-		else if (sizeQUEUE(p3q) > 0)
-		{
-			j = dequeue(p3q);
-			startProcess(j, args);
-		}
-	}
-*/
-
-	// kill(process->pid, SIGINT);
 
 	return 0;
 }
 
+
+/************************
+Required functions
+************************/
 /**
  * Starts a process using the fork() command & returns the pid
+ * @j - job to start
+ * return the job
  */
-static void startProcess(JOB *j, char **args)
+static JOB *startProcess(JOB *j)
 {
-	char *processTime = j->processorTime;
-	strcpy(args[1], processTime);
-	//pid_t pid = fork();
-	//printf("pid: %d\n", pid);
-
-	//printf("args: %s %s %s\n", args[0], args[1], args[2]);
-
 	switch (j->pid = fork())
 	{
 		case -1:
-			printf("error\n");
-			return;
+			return NULL;
 		case 0:
-			printf("exec\n");
-			printf("EXECVP(./process, %s,%s,%s)\n", args[0], args[1], args[2]);
-			char **argv = malloc(sizeof(char *) * 3);
-			strcpy(argv[0], "./process");
-			strcpy(argv[1], "1");
-			argv[2] = NULL;
-			execvp("./process", argv);
-			//execvp("./process", NULL);
-			return;
+			execvp(j->args[0], j->args);
+			return NULL;
 		default:
-			printf("default pid: %d\n", j->pid);
-			return;
+			return j;
 	}
 }
 
@@ -193,7 +128,11 @@ static void startProcess(JOB *j, char **args)
  */
 static JOB *restartProcess(JOB *j)
 {
-	kill(j->pid, SIGCONT);
+	if (kill(j->pid, SIGCONT))
+	{
+		printf("Error: Restart process error pid: %d\n", j->pid);
+		return NULL;
+	}
 	return j;
 }
 
@@ -204,7 +143,11 @@ static JOB *restartProcess(JOB *j)
  */
 static JOB *terminateProcess(JOB *j)
 {
-	kill(j->pid, SIGINT);
+	if (kill(j->pid, SIGINT))
+	{
+		printf("Error: Terminate process error pid: %d\n", j->pid);
+		return NULL;
+	}
 	int status;
 	waitpid(j->pid, &status, WUNTRACED);
 	return j;
@@ -217,12 +160,20 @@ static JOB *terminateProcess(JOB *j)
  */
 static JOB *suspendProcess(JOB *j)
 {
-	kill(j->pid, SIGTSTP);
+	if (kill(j->pid, SIGTSTP))
+	{
+		printf("Error: Suspend process error pid: %d\n", j->pid);
+		return NULL;
+	}
 	int status;
 	waitpid(j->pid, &status, WUNTRACED);
 	return j;
 }
 
+
+/************************
+Utility functions
+************************/
 /**
  * Displays the job object in proper format
  * @fp - file printed to
@@ -235,14 +186,43 @@ static void displayJOB(FILE *fp, void *job)
 }
 
 /**
+ * Initializes variables to base values and initializes queue structs
+ */
+static void initialize(void)
+{
+	running = NULL;
+	timer = 0;
+
+	/* Initialize all queues */
+	jobList 	= newQUEUE(displayJOB);
+	sysQueue 	= newQUEUE(displayJOB);
+	p1q 		= newQUEUE(displayJOB);
+	p2q 		= newQUEUE(displayJOB);
+	p3q 		= newQUEUE(displayJOB);
+}
+
+/**
+ * Checks to see if there is a running process or any jobs in any queue
+ * return 1 if complete, 0 if still jobs to do
+ */
+static int complete(void)
+{
+	if (running || !priorityQueuesEmpty() || sizeQUEUE(sysQueue) > 0 || sizeQUEUE(jobList) > 0)
+		return 0;
+	else
+		return 1;
+}
+
+/**
  * Checks the priority queues to see if they are empty
  * @q1 - first queue
  * @q2 - second queue
  * @q3 - third queue
  * return 1 if all queues empty, 0 if at least one job in at least one queue
  */
-static int priorityQueuesEmpty(QUEUE *q1, QUEUE *q2, QUEUE *q3) {
-	if (sizeQUEUE(q1) == 0 && sizeQUEUE(q2) == 0 && sizeQUEUE(q3) == 0) {
+static int priorityQueuesEmpty(void) {
+	if (sizeQUEUE(p1q) == 0 && sizeQUEUE(p2q) == 0 && sizeQUEUE(p3q) == 0)
+	{
 		return 1;
 	}
 	else
@@ -255,10 +235,7 @@ static int priorityQueuesEmpty(QUEUE *q1, QUEUE *q2, QUEUE *q3) {
  */
 static void incrementPriority(JOB *j)
 {
-	if (j->priority < 3)
-	{
-		j->priority += 1;
-	}
+	if (j->priority < 3) j->priority += 1;
 }
 
 /**
@@ -283,6 +260,9 @@ static void readInFile(FILE *fp, QUEUE *q)
 		job->priority = priority;
 		job->processorTime = processorTime;
 		job->remainingProcessorTime = atoi(processorTime);
+		job->args[0] = "./process";
+		job->args[1] = processorTime;
+		job->args[2] = NULL;
 
 		/* Add the new object to the job dispatch list queue */
 		enqueue(q, job);
@@ -298,7 +278,7 @@ static void readInFile(FILE *fp, QUEUE *q)
  * @p2q - Priority queue 2
  * @p3q - Priority queue 3
  */
-static void dispatchJobs(QUEUE *jobList, QUEUE *sysQueue, QUEUE *p1q, QUEUE *p2q, QUEUE *p3q)
+static void dispatchJobs(void)
 {
 	JOB *currJob = dequeue(jobList);
 
@@ -331,7 +311,70 @@ static void dispatchJobs(QUEUE *jobList, QUEUE *sysQueue, QUEUE *p1q, QUEUE *p2q
 	}
 }
 
-static void dispatcher(int size, QUEUE *sysQueue, QUEUE *p1, QUEUE *p2, QUEUE *p3)
+/**
+ * Enqueues the job to the correct priority queue
+ * @j - the job to be enqueued
+ */
+static void enqToPriority(JOB *j)		// FIXME: the priorities might be reversed
+{
+	switch (j->priority)
+	{
+		case 1:
+			enqueue(sysQueue, j);
+			break;
+		case 2:
+			enqueue(p1q, j);
+			break;
+		case 3:
+			enqueue(p2q, j);
+			break;
+	}
+}
+
+/**
+ * Send job to proper queue
+ * @j - job to be sent
+ */
+static void sendToQueue(JOB *j)
+{
+	switch (j->priority)
+	{
+		case 0:
+			enqueue(sysQueue, j);
+			break;
+		case 1:
+			enqueue(p1q, j);
+			break;
+		case 2:
+			enqueue(p2q, j);
+			break;
+		case 3:
+			enqueue(p3q, j);
+			break;
+		default:
+			break;
+	}
+
+	return;
+}
+
+/**
+ * Returns the highest priority queue that is not null or sysQueue
+ * return - highest priority non-null queue
+ */
+static QUEUE *getHighestPriorityQ(void)
+{
+	if (sizeQUEUE(p1q) > 0)
+		return p1q;
+	else if (sizeQUEUE(p2q) > 0)
+		return p2q;
+	else if (sizeQUEUE(p3q) > 0)
+		return p3q;
+
+	return NULL;
+}
+
+static void dispatcher(void)
 {
 	// while (still things in any queues)
 	//		1. enqueue to appropriate queues
@@ -353,58 +396,54 @@ static void dispatcher(int size, QUEUE *sysQueue, QUEUE *p1, QUEUE *p2, QUEUE *p
 	//				print status of process
 	//		4. sleep, increment timer
 
-	if (running)
+	while (!complete())
 	{
-		if (--running->remainingProcessorTime == 0)
+/*
+		JOB *next = dequeue(jobList);
+		printf("flag\n");
+		while (sizeQUEUE(jobList) > 0)
 		{
-			terminateProcess(running);
-			running = NULL;
-		}
-		else if (sizeQUEUE(sysQueue) > 0 || !priorityQueuesEmpty(p1, p2, p3))
-		{
-			if (running->priority != 0)
+			printf("flag2\n");
+			if (next->arrivalTime <= timer)
 			{
-				JOB *ptr = suspendProcess(running);
-				incrementPriority(ptr);
-				// enqueue ptr to the proper priority queue
-				switch (ptr->priority)
-				{
-					case 0:
-						enqueue(sysQueue, ptr);
-						break;
-					case 1:
-						enqueue(p1, ptr);
-						break;
-					case 2:
-						enqueue(p2, ptr);
-						break;
-					case 3:
-						enqueue(p3, ptr);
-						break;
-					default:
-						break;
-				}
+				// enqueue next to the appropriate queue
+				sendToQueue(next);
+			}
+
+			next = dequeue(jobList);
+		}
+*/
+		if (running)
+		{
+			if (--running->remainingProcessorTime == 0)
+			{
+				terminateProcess(running);
 				running = NULL;
+			}
+			else if (!priorityQueuesEmpty() || sizeQUEUE(sysQueue) > 0)				// FIXME: Might need to be another condition in the elif statement
+			{
+				if (running->priority != 0)
+				{
+					JOB *j = suspendProcess(running);
+					incrementPriority(j);
+					enqToPriority(j);
+					running = NULL;
+				}
 			}
 		}
 
-		if (!running && (!priorityQueuesEmpty(p1, p2, p3 || sizeQUEUE(sysQueue) > 0)))
+		if (!running && (!priorityQueuesEmpty() || sizeQUEUE(sysQueue) > 0))
 		{
+			//printf("no running processes, setting running to ...\n");
 			if (sizeQUEUE(sysQueue) > 0)
 			{
+			//	printf("running is a system process\n");
 				running = dequeue(sysQueue);
 			}
-			else if (sizeQUEUE(p1) > 0)
+			else if (!priorityQueuesEmpty())
 			{
-				running = dequeue(p1);
-			}
-			else if (sizeQUEUE(p2) > 0)
-			{
-				running = dequeue(p2);
-			}
-			else if (sizeQUEUE(p3) > 0)
-			{
-				running = dequeue(p3);
+			//	printf("running is a priority queue process\n");
+				running = dequeue(getHighestPriorityQ());
 			}
 
 			if (running->pid != 0)
@@ -413,15 +452,14 @@ static void dispatcher(int size, QUEUE *sysQueue, QUEUE *p1, QUEUE *p2, QUEUE *p
 			}
 			else
 			{
-				// init args here
-				startProcess(running, args);
+				startProcess(running);
+				//print the process... needed???
 			}
-
-			sleep(1);
-			++timer;
 		}
-	}
 
+		sleep(1);
+		++timer;
+	}
 /*
 	char *args[3];
 	args[0] = "./process";
@@ -455,10 +493,10 @@ static void dispatcher(int size, QUEUE *sysQueue, QUEUE *p1, QUEUE *p2, QUEUE *p
 		if (!running && !priorityQueuesEmpty(p1, p2, p3))
 		{
 			printf("if1\n");
-			if (sizeQUEUE(sys) > 0)
+			if (sizeQUEUE(sysQueue) > 0)
 			{
 				printf("if1.0\n");
-				running = dequeue(sys);
+				running = dequeue(sysQueue);
 			}
 			else if (!priorityQueuesEmpty(p1, p2, p3))
 			{
